@@ -62,6 +62,50 @@ class JointsDataset(Dataset):
     def evaluate(self, cfg, preds, output_dir, *args, **kwargs):
         raise NotImplementedError
 
+    def half_body_transform(self, joints, joints_vis):
+        upper_joints = []
+        lower_joints = []
+        for joint_id in range(self.num_joints):
+            if joints_vis[joint_id][0] > 0:
+                if joint_id in self.upper_body_ids:
+                    upper_joints.append(joints[joint_id])
+                else:
+                    lower_joints.append(joints[joint_id])
+
+        if np.random.randn() < 0.5 and len(upper_joints) > 2:
+            selected_joints = upper_joints
+        else:
+            selected_joints = lower_joints \
+                if len(lower_joints) > 2 else upper_joints
+
+        if len(selected_joints) < 2:
+            return None, None
+
+        selected_joints = np.array(selected_joints, dtype=np.float32)
+        center = selected_joints.mean(axis=0)[:2]
+
+        left_top = np.amin(selected_joints, axis=0)
+        right_bottom = np.amax(selected_joints, axis=0)
+
+        w = right_bottom[0] - left_top[0]
+        h = right_bottom[1] - left_top[1]
+
+        if w > self.aspect_ratio * h:
+            h = w * 1.0 / self.aspect_ratio
+        elif w < self.aspect_ratio * h:
+            w = h * self.aspect_ratio
+
+        scale = np.array(
+            [
+                w * 1.0 / self.pixel_std,
+                h * 1.0 / self.pixel_std
+            ],
+            dtype=np.float32
+        )
+
+        scale = scale * 1.5
+
+        return center, scale
 
     def __len__(self,):
         return len(self.db)
@@ -99,6 +143,15 @@ class JointsDataset(Dataset):
         r = 0
 
         if self.is_train:
+
+            c_half_body, s_half_body = self.half_body_transform(
+                    joints, joints_vis
+                )
+
+            if c_half_body is not None and s_half_body is not None:
+                    c, s = c_half_body, s_half_body
+
+
             sf = self.scale_factor
             rf = self.rotation_factor
             s = s * np.clip(np.random.randn()*sf + 1, 1 - sf, 1 + sf)
